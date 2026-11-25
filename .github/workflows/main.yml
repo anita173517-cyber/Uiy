@@ -1,0 +1,77 @@
+name: RAM PLAYER v23.1 Cinema Rebirth Compact 20MB - Build & Verify APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Locate and extract v23.1 Compact ZIP
+        run: |
+          set -e
+          ZIP_FILE=$(ls -1t *23.1*.zip *CINEMA*.zip *COMPACT*.zip *.zip 2>/dev/null | head -n 1 || true)
+          if [ -n "$ZIP_FILE" ] && [ ! -f "settings.gradle.kts" ]; then
+            echo "Extracting $ZIP_FILE ..."
+            unzip -oq "$ZIP_FILE" -d .
+          fi
+          if [ ! -f "settings.gradle.kts" ]; then
+            SUBDIR=$(find . -maxdepth 3 -name "settings.gradle.kts" -printf '%h\n' | head -n 1 || true)
+            if [ -n "$SUBDIR" ] && [ "$SUBDIR" != "." ]; then
+              cp -a "$SUBDIR"/. .
+            fi
+          fi
+          test -f settings.gradle.kts
+          test -f app/build.gradle.kts
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Configure Android SDK and install SDK 36
+        run: |
+          set -e
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "sdk.dir=$SDK_ROOT" > local.properties
+          yes | "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;35.0.0"
+
+      - name: Set up Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Verify project structure & run all unit tests
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_project.py
+          gradle testDebugUnitTest --no-daemon
+
+      - name: Build Compact Split Release APKs (~18-20 MB each)
+        run: |
+          set -euo pipefail
+          gradle assembleRelease --no-daemon
+          ls -lh app/build/outputs/apk/release/
+
+      - name: Upload ARMv7 Compact APK (~18 MB for 32-bit Smart TVs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: RAM-PLAYER-v23.1-ARMv7-TV-Compact
+          path: app/build/outputs/apk/release/*armeabi-v7a*.apk
+          if-no-files-found: error
+
+      - name: Upload ARM64 Compact APK (~20 MB for 64-bit Phones & 4K TVs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: RAM-PLAYER-v23.1-ARM64-Phone-TV-Compact
+          path: app/build/outputs/apk/release/*arm64-v8a*.apk
+          if-no-files-found: error
+          
